@@ -121,7 +121,7 @@ pipeline {
         sh '''
           set +e
           for i in $(seq 1 30); do
-            curl -fsS http://localhost:3001/health && exit 0 || true
+            curl -fsS http://host.docker.internal:3001/health && exit 0 || true
             echo "Health not ready, retry $i/30..."
             sleep 2
           done
