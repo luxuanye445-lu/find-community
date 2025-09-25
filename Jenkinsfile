@@ -9,7 +9,6 @@ pipeline {
   }
 
   environment {
-    // Change these values to your own environment
     NODEJS_TOOL = 'Node20'                 // NodeJS tool name defined in Jenkins global tools
     DOCKER_NS   = '<xuanyelu>'  // DockerHub namespace 
     APP_NAME    = 'find-community'
