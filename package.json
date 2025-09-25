@@ -1,0 +1,25 @@
+{
+  "name": "find-community",
+  "version": "0.1.0",
+  "private": false,
+  "type": "commonjs",
+  "scripts": {
+    "build": "echo \"Build step placeholder (add transpile/minify here if needed)\"",
+    "start": "node src/index.js",
+    "dev": "node src/index.js",
+    "test": "jest --runInBand",
+    "test:ci": "jest --ci --reporters=default --reporters=jest-junit"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0",
+    "jest-junit": "^16.0.0"
+  },
+  "jest-junit": {
+    "outputDirectory": "reports/junit",
+    "outputName": "junit.xml"
+  }
+}
