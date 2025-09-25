@@ -3,32 +3,24 @@ pipeline {
 
   options {
     timestamps()
-    ansiColor('xterm')
+    // ansiColor('xterm')  // ← 删除这行
   }
 
   stages {
     stage('Checkout') {
-      steps {
-        checkout scm
-      }
+      steps { checkout scm }
     }
 
     stage('Install') {
-      steps {
-        sh 'npm ci'
-      }
+      steps { sh 'npm ci' }
     }
 
     stage('Build') {
-      steps {
-        sh 'npm run build'
-      }
+      steps { sh 'npm run build' }
     }
 
     stage('Test') {
-      steps {
-        sh 'npm run test:ci || true' // keep pipeline flowing while you stabilize tests
-      }
+      steps { sh 'npm run test:ci || true' }  // 先保证能跑通
       post {
         always {
           junit allowEmptyResults: true, testResults: 'reports/junit/junit.xml'
@@ -45,37 +37,11 @@ pipeline {
         }
       }
     }
+  }
 
-    // === Optional (enable later) ===
-    // stage('Code Quality') {
-    //   steps {
-    //     // Example for SonarQube/CodeClimate goes here
-    //   }
-    // }
-    //
-    // stage('Security') {
-    //   steps {
-    //     // Example: npm audit --audit-level=moderate
-    //     sh 'npm audit --audit-level=moderate || true'
-    //   }
-    // }
-    //
-    // stage('Deploy (Staging)') {
-    //   steps {
-    //     // Example: docker run -d -p 3000:3000 find-community:${env.BUILD_NUMBER}
-    //   }
-    // }
-    //
-    // stage('Release (Prod)') {
-    //   steps {
-    //     // Example: tag + push to registry, or trigger prod deployment
-    //   }
-    // }
-    //
-    // stage('Monitoring') {
-    //   steps {
-    //     // Hook to monitoring/alerting systems; /health is available
-    //   }
-    // }
+  post {
+    always {
+      archiveArtifacts artifacts: '**/coverage/**/*', allowEmptyArchive: true
+    }
   }
 }
