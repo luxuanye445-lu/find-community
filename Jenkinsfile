@@ -11,14 +11,13 @@ pipeline {
     NODEJS_TOOL = 'Node20'
     DOCKER_NS   = 'xuanyelu'
     APP_NAME    = 'find-community'
-
     IMAGE_TAG    = "${env.BRANCH_NAME == 'main' ? 'latest' : env.BRANCH_NAME}-${env.BUILD_NUMBER}"
     IMAGE_NAME   = "${DOCKER_NS}/${APP_NAME}:${IMAGE_TAG}"
     IMAGE_LATEST = "${DOCKER_NS}/${APP_NAME}:latest"
   }
 
   tools {
-    nodejs 'Node20'
+    nodejs "${env.NODEJS_TOOL}"
   }
 
   stages {
@@ -52,8 +51,8 @@ pipeline {
 
     stage('run code quality analysis') {
       steps {
+        sh 'npm run prepare:reports'
         sh 'mkdir -p reports/eslint'
-        sh 'npm run prepare:reports || true'
         sh 'npm run lint | tee reports/eslint/eslint.txt || true'
       }
       post {
@@ -65,8 +64,8 @@ pipeline {
 
     stage('Security stage') {
       steps {
-        sh 'npm run prepare:reports || true'
-        sh 'npm run audit:json || true'
+        sh 'npm run prepare:reports'
+        sh 'npm run audit:json'
         sh '''
           docker run --rm \
             -v "$PWD":/scan \
@@ -86,7 +85,7 @@ pipeline {
       steps {
         sh "docker build -t ${IMAGE_NAME} ."
         withCredentials([usernamePassword(
-          credentialsId: 'DOCKERHUB_CREDS',
+          credentialsId: 'dockerhub-cred',
           usernameVariable: 'DU',
           passwordVariable: 'DP'
         )]) {
@@ -142,4 +141,3 @@ pipeline {
     }
   }
 }
-
