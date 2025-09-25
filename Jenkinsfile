@@ -1,9 +1,9 @@
 pipeline {
   agent any
+  options { timestamps() }
 
-  options {
-    timestamps()
-    // ansiColor('xterm')  // ← 删除这行
+  environment {
+    IMAGE_NAME = 'find-community'
   }
 
   stages {
@@ -11,16 +11,17 @@ pipeline {
       steps { checkout scm }
     }
 
-    stage('Install') {
-      steps { sh 'npm ci' }
-    }
-
-    stage('Build') {
-      steps { sh 'npm run build' }
-    }
-
-    stage('Test') {
-      steps { sh 'npm run test:ci || true' }  // 先保证能跑通
+    stage('Node CI (Install, Build, Test)') {
+      steps {
+        script {
+          docker.image('node:20-alpine').inside('-u root') {
+            sh 'node -v && npm -v'
+            sh 'npm ci'
+            sh 'npm run build'
+            sh 'npm run test:ci || true'  
+          }
+        }
+      }
       post {
         always {
           junit allowEmptyResults: true, testResults: 'reports/junit/junit.xml'
@@ -31,9 +32,11 @@ pipeline {
     stage('Docker Build') {
       steps {
         script {
-          def imageTag = "find-community:${env.BUILD_NUMBER}"
-          sh "docker build -t ${imageTag} ."
-          echo "Built image -> ${imageTag}"
+          sh 'docker version'
+          def tag = "${env.BUILD_NUMBER}"
+          sh "docker build -t ${IMAGE_NAME}:${tag} ."
+          sh "docker tag ${IMAGE_NAME}:${tag} ${IMAGE_NAME}:latest"
+          echo "Built image -> ${IMAGE_NAME}:${tag}"
         }
       }
     }
@@ -41,7 +44,8 @@ pipeline {
 
   post {
     always {
-      archiveArtifacts artifacts: '**/coverage/**/*', allowEmptyArchive: true
+      archiveArtifacts artifacts: 'reports/**/*.xml', allowEmptyArchive: true
     }
   }
 }
+
