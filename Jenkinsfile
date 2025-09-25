@@ -1,82 +1,156 @@
 pipeline {
   agent any
-  tools { nodejs 'Node20' }   // 与 Global Tool Configuration 中的名称一致
-  options { timestamps() }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+    durabilityHint('MAX_SURVIVABILITY')
+  }
+
+  environment {
+    // Change these values to your own environment
+    NODEJS_TOOL = 'Node20'                 // NodeJS tool name defined in Jenkins global tools
+    DOCKER_NS   = '<xuanyelu>'  // DockerHub namespace 
+    APP_NAME    = 'find-community'
+
+    IMAGE_TAG    = "${env.BRANCH_NAME == 'main' ? 'latest' : env.BRANCH_NAME}-${env.BUILD_NUMBER}"
+    IMAGE_NAME   = "${DOCKER_NS}/${APP_NAME}:${IMAGE_TAG}"
+    IMAGE_LATEST = "${DOCKER_NS}/${APP_NAME}:latest"
+  }
+
+  tools {
+    nodejs "${env.NODEJS_TOOL}"
+  }
 
   stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
 
-    stage('Install') {
+    stage('Build stage') {
       steps {
-        // 没有 package-lock 的情况下用 npm install；若后续提交了 lock，可换回 npm ci
-        sh 'npm install'
+        deleteDir()
+        // Checkout source code from SCM (GitHub/GitLab)
+        checkout scm
+        sh 'npm ci'
+        sh 'npm run build || true'   // Optional build step (non-blocking if not configured)
       }
     }
 
-    stage('Lint') {
+    stage('Test stage') {
       steps {
-        // 演示期先不因告警失败；想严格可去掉 "|| true" 或加 --max-warnings=0
-        sh 'npm run lint || true'
-      }
-    }
-
-    stage('Test') {
-      steps {
-        sh 'npm run test:ci || true'
+        sh 'npm run test:ci'          // Run tests and generate reports/junit/*.xml + coverage
       }
       post {
         always {
-          // 收集 JUnit 报告与覆盖率产物
-          junit allowEmptyResults: true, testResults: 'reports/junit/junit.xml'
-          archiveArtifacts artifacts: 'coverage/**/*', allowEmptyArchive: true
+          junit testResults: 'reports/junit/*.xml', allowEmptyResults: true
+          publishHTML(target: [
+            reportName: 'Coverage',
+            reportDir : 'coverage/lcov-report',
+            reportFiles: 'index.html',
+            alwaysLinkToLastBuild: true,
+            keepAll: true
+          ])
         }
       }
     }
 
-    stage('Build') {
-      steps {
-        sh 'npm run build'
-      }
-    }
-
-    stage('Security (npm audit)') {
+    stage('run code quality analysis') {
       steps {
         sh 'npm run prepare:reports'
-        sh 'npm run audit:json'
+        // Save ESLint output for visibility in Jenkins console and archived artifacts
+        sh 'npm run lint | tee reports/eslint/eslint.txt || true'
       }
       post {
         always {
-          archiveArtifacts artifacts: 'reports/security/npm-audit.json', allowEmptyArchive: true
+          archiveArtifacts artifacts: 'reports/eslint/**', allowEmptyArchive: true
         }
       }
     }
 
-    // === 可选：若以后在 Jenkins 主机装了 Docker，可解注释以下两个阶段 ===
-    // stage('Docker Build') {
-    //   when {
-    //     expression { sh(script: 'command -v docker >/dev/null 2>&1', returnStatus: true) == 0 }
-    //   }
-    //   steps {
-    //     sh 'docker build -t find-community:${BUILD_NUMBER} .'
-    //   }
-    // }
-    //
-    // stage('Deploy (Staging)') {
-    //   when {
-    //     expression { sh(script: 'command -v docker >/dev/null 2>&1', returnStatus: true) == 0 }
-    //   }
-    //   steps {
-    //     sh 'docker rm -f fc-stg || true'
-    //     sh 'docker run -d --name fc-stg -p 3000:3000 find-community:${BUILD_NUMBER}'
-    //   }
-    // }
+    stage('Security stage') {
+      steps {
+        // npm audit (does not fail pipeline if issues exist)
+        sh 'npm run prepare:reports'
+        sh 'npm run audit:json'
+
+        // Trivy scan the project folder for vulnerabilities, secrets, misconfigurations
+        sh '''
+          docker run --rm \
+            -v "$PWD":/scan \
+            -w /scan \
+            aquasec/trivy:0.53.0 fs --scanners vuln,secret,misconfig \
+            --format json -o reports/security/trivy-fs.json . || true
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'reports/security/*', allowEmptyArchive: true
+        }
+      }
+    }
+
+    stage('Release stage') {
+      when { anyOf { branch 'main'; branch 'master' } }
+      steps {
+        sh "docker build -t ${IMAGE_NAME} ."
+
+        withCredentials([usernamePassword(
+          credentialsId: 'DOCKERHUB_CREDS',       // Pre-created DockerHub credentials in Jenkins
+          usernameVariable: 'DU',
+          passwordVariable: 'DP'
+        )]) {
+          sh 'echo "$DP" | docker login -u "$DU" --password-stdin'
+          sh "docker push ${IMAGE_NAME}"
+          sh """
+            docker tag ${IMAGE_NAME} ${IMAGE_LATEST}
+            docker push ${IMAGE_LATEST}
+          """
+          sh 'docker logout || true'
+        }
+      }
+    }
+
+    stage('Deploy stage') {
+      when { anyOf { branch 'main'; branch 'master' } }
+      steps {
+        // Deploy container on Jenkins host, exposed at http://localhost:3001
+        sh '''
+          set -eux
+          APP_PORT=3001
+          CONTAINER_NAME=find-community
+
+          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          docker run -d --name "$CONTAINER_NAME" \
+            -p ${APP_PORT}:3000 \
+            --restart unless-stopped \
+            ${IMAGE_LATEST}
+        '''
+      }
+    }
+
+    stage('Monitoring and Alerting stage') {
+      when { anyOf { branch 'main'; branch 'master' } }
+      steps {
+        // Health check endpoint with retries (fail build if not ready)
+        sh '''
+          set +e
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:3001/health && exit 0 || true
+            echo "Health not ready, retry $i/30..."
+            sleep 2
+          done
+          echo "Health check failed: http://localhost:3001/health"
+          exit 1
+        '''
+      }
+    }
   }
 
   post {
-    success { echo '✅ Build • Lint • Test • Security 全部完成' }
-    always  { archiveArtifacts artifacts: 'reports/**/*.xml', allowEmptyArchive: true }
+    success {
+      echo "Build ${env.BUILD_NUMBER} SUCCESS → ${env.IMAGE_NAME}"
+    }
+    always {
+      archiveArtifacts artifacts: 'npm-debug.log', allowEmptyArchive: true
+    }
   }
 }
-
