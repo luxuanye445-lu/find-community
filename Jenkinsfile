@@ -8,8 +8,8 @@ pipeline {
   }
 
   environment {
-    NODEJS_TOOL = 'Node20'                 // NodeJS tool name defined in Jenkins global tools
-    DOCKER_NS   = '<xuanyelu>'  // DockerHub namespace 
+    NODEJS_TOOL = 'Node20'
+    DOCKER_NS   = 'xuanyelu'
     APP_NAME    = 'find-community'
 
     IMAGE_TAG    = "${env.BRANCH_NAME == 'main' ? 'latest' : env.BRANCH_NAME}-${env.BUILD_NUMBER}"
@@ -18,7 +18,7 @@ pipeline {
   }
 
   tools {
-    nodejs "${env.NODEJS_TOOL}"
+    nodejs 'Node20'
   }
 
   stages {
@@ -26,16 +26,15 @@ pipeline {
     stage('Build stage') {
       steps {
         deleteDir()
-        // Checkout source code from SCM (GitHub/GitLab)
         checkout scm
         sh 'npm ci'
-        sh 'npm run build || true'   // Optional build step (non-blocking if not configured)
+        sh 'npm run build || true'
       }
     }
 
     stage('Test stage') {
       steps {
-        sh 'npm run test:ci'          // Run tests and generate reports/junit/*.xml + coverage
+        sh 'npm run test:ci'
       }
       post {
         always {
@@ -53,8 +52,8 @@ pipeline {
 
     stage('run code quality analysis') {
       steps {
-        sh 'npm run prepare:reports'
-        // Save ESLint output for visibility in Jenkins console and archived artifacts
+        sh 'mkdir -p reports/eslint'
+        sh 'npm run prepare:reports || true'
         sh 'npm run lint | tee reports/eslint/eslint.txt || true'
       }
       post {
@@ -66,11 +65,8 @@ pipeline {
 
     stage('Security stage') {
       steps {
-        // npm audit (does not fail pipeline if issues exist)
-        sh 'npm run prepare:reports'
-        sh 'npm run audit:json'
-
-        // Trivy scan the project folder for vulnerabilities, secrets, misconfigurations
+        sh 'npm run prepare:reports || true'
+        sh 'npm run audit:json || true'
         sh '''
           docker run --rm \
             -v "$PWD":/scan \
@@ -87,12 +83,10 @@ pipeline {
     }
 
     stage('Release stage') {
-      when { anyOf { branch 'main'; branch 'master' } }
       steps {
         sh "docker build -t ${IMAGE_NAME} ."
-
         withCredentials([usernamePassword(
-          credentialsId: 'DOCKERHUB_CREDS',       // Pre-created DockerHub credentials in Jenkins
+          credentialsId: 'DOCKERHUB_CREDS',
           usernameVariable: 'DU',
           passwordVariable: 'DP'
         )]) {
@@ -108,9 +102,7 @@ pipeline {
     }
 
     stage('Deploy stage') {
-      when { anyOf { branch 'main'; branch 'master' } }
       steps {
-        // Deploy container on Jenkins host, exposed at http://localhost:3001
         sh '''
           set -eux
           APP_PORT=3001
@@ -126,9 +118,7 @@ pipeline {
     }
 
     stage('Monitoring and Alerting stage') {
-      when { anyOf { branch 'main'; branch 'master' } }
       steps {
-        // Health check endpoint with retries (fail build if not ready)
         sh '''
           set +e
           for i in $(seq 1 30); do
@@ -152,3 +142,4 @@ pipeline {
     }
   }
 }
+
