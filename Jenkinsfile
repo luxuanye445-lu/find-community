@@ -64,18 +64,20 @@ pipeline {
 
     stage('Security stage') {
       steps {
+        sh 'npm run prepare:reports'
+        sh 'npm run audit:json'
         sh '''
-          mkdir -p reports/security
-
-          npm run prepare:reports
-          npm audit --json > reports/security/npm-audit.json || true
-
           docker run --rm \
-            -v ${WORKSPACE}:/scan \
-            aquasec/trivy:0.53.0 fs \
-            --scanners vuln,secret,misconfig \
-            --format json -o /scan/reports/security/trivy-fs.json /scan
+            -v "$PWD":/scan \
+            -w /scan \
+            aquasec/trivy:0.53.0 fs --scanners vuln,secret,misconfig \
+            --format json -o reports/security/trivy-fs.json . || true
         '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'reports/security/*', allowEmptyArchive: true
+        }
       }
     }
 
